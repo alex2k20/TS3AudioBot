@@ -251,6 +251,7 @@ namespace TSLib
 
 		private static readonly Regex IpRegex = new Regex(@"(?<ip>(?:\d{1,3}\.){3}\d{1,3}|\[[0-9a-fA-F:]+\]|localhost)(?::(?<port>\d{1,5}))?", RegexOptions.ECMAScript | RegexOptions.Compiled);
 
+		// TODO: Use IPEndPoint.Parse maybe with #if
 		private static IPEndPoint? ParseIpEndPoint(string address, ushort defaultPort)
 		{
 			var match = IpRegex.Match(address);

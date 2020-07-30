@@ -64,6 +64,8 @@ namespace TSLib.Scheduler
 		private void DoWork()
 		{
 			Tools.SetLogId(logId);
+			SynchronizationContext.SetSynchronizationContext(new BotSyncCtx(this));
+
 			while (!queue.IsCompleted)
 			{
 				TimeSpan timeTillNextTimer = DispatchTimers();
@@ -137,10 +139,23 @@ namespace TSLib.Scheduler
 
 		private bool TryExecuteTaskInternal(Task task, bool inline)
 		{
+
 #if DEBUG
 			LogExecuteEnter(task, inline);
 #endif
-			bool ok = TryExecuteTask(task);
+			bool ok = false;
+
+			try
+			{
+				ok = TryExecuteTask(task);
+			}
+			catch (Exception ex)
+			{
+				Log.Warn(ex, "Task ex");
+			}
+			
+			if (task.IsFaulted)
+				Log.Warn("Faulty");
 #if DEBUG
 			LogExecuteExit(task);
 #endif
@@ -300,6 +315,66 @@ namespace TSLib.Scheduler
 		public void Dispose()
 		{
 			queue.CompleteAdding();
+		}
+	}
+
+	public class BotSyncCtx : SynchronizationContext
+	{
+		DedicatedTaskScheduler dedi;
+
+		public BotSyncCtx(DedicatedTaskScheduler dedi)
+		{
+			this.dedi = dedi;
+		}
+
+		// Post - asynchronous: drop off and continue
+		public override void Post(SendOrPostCallback d, object? state)
+		{
+			Console.WriteLine("Post: {0}, {1}", d, state);
+			_ = dedi.Invoke(() =>
+			{
+				try
+				{
+					d(state);
+				}
+				catch (Exception ex)
+				{
+					Console.WriteLine("post ex {0}", ex);
+				}
+			});
+		}
+
+		// Send - synchronous: wait for answer(or action completed)
+		public override void Send(SendOrPostCallback d, object? state)
+		{
+			if (Current == this)
+			{
+				Console.WriteLine("Send I: {0}, {1}", d, state);
+				d(state);
+			}
+			else
+			{
+				Console.WriteLine("Send S: {0}, {1}", d, state);
+
+				try
+				{
+					dedi.Invoke(() =>
+					{
+						try
+						{
+							d(state);
+						}
+						catch (Exception ex)
+						{
+							Console.WriteLine("Send ex {0}", ex);
+						}
+					}).GetAwaiter().GetResult();
+				}
+				catch (Exception exo)
+				{
+					Console.WriteLine("Send wrap ex {0}", exo);
+				}
+			}
 		}
 	}
 }

@@ -63,13 +63,13 @@ namespace TS3AudioBot.Helper
 
 		// Return
 
-		public static async Task Send(this HttpRequestMessage request)
+		public static async Task Send(this HttpRequestMessage request, CancellationToken token = default)
 		{
 			try
 			{
 				using (request)
 				{
-					using var response = await httpClient.SendDefaultAsync(request);
+					using var response = await httpClient.SendDefaultAsync(request, token);
 				}
 			}
 			catch (Exception ex) when (ex is HttpRequestException || ex is OperationCanceledException)
@@ -78,13 +78,13 @@ namespace TS3AudioBot.Helper
 			}
 		}
 
-		public static async Task<string> AsString(this HttpRequestMessage request)
+		public static async Task<string> AsString(this HttpRequestMessage request, CancellationToken token = default)
 		{
 			try
 			{
 				using (request)
 				{
-					using var response = await httpClient.SendDefaultAsync(request);
+					using var response = await httpClient.SendDefaultAsync(request, token);
 					return await response.Content.ReadAsStringAsync();
 				}
 			}
@@ -94,15 +94,15 @@ namespace TS3AudioBot.Helper
 			}
 		}
 
-		public static async Task<T> AsJson<T>(this HttpRequestMessage request)
+		public static async Task<T> AsJson<T>(this HttpRequestMessage request, CancellationToken token = default)
 		{
 			try
 			{
 				using (request)
 				{
-					using var response = await httpClient.SendDefaultAsync(request);
+					using var response = await httpClient.SendDefaultAsync(request, token);
 					using var stream = await response.Content.ReadAsStreamAsync();
-					var obj = await JsonSerializer.DeserializeAsync<T>(stream);
+					var obj = await JsonSerializer.DeserializeAsync<T>(stream, cancellationToken: token);
 					if (obj is null) throw Error.LocalStr(strings.error_net_empty_response);
 					return obj;
 				}
@@ -118,14 +118,14 @@ namespace TS3AudioBot.Helper
 			}
 		}
 
-		public static async Task ToAction(this HttpRequestMessage request, Func<HttpResponseMessage, Task> body)
+		public static async Task ToAction(this HttpRequestMessage request, Func<HttpResponseMessage, Task> body, CancellationToken token = default)
 		{
 			try
 			{
 				using (request)
 				{
-					using var response = await httpClient.SendDefaultAsync(request);
-					await body.Invoke(response);
+					using var response = await httpClient.SendDefaultAsync(request, token);
+					await body.Invoke(response); // TODO add token ?
 				}
 			}
 			catch (Exception ex) when (ex is HttpRequestException || ex is OperationCanceledException)
@@ -134,14 +134,14 @@ namespace TS3AudioBot.Helper
 			}
 		}
 
-		public static async Task<T> ToAction<T>(this HttpRequestMessage request, Func<HttpResponseMessage, Task<T>> body)
+		public static async Task<T> ToAction<T>(this HttpRequestMessage request, Func<HttpResponseMessage, Task<T>> body, CancellationToken token = default)
 		{
 			try
 			{
 				using (request)
 				{
-					using var response = await httpClient.SendDefaultAsync(request);
-					return await body.Invoke(response);
+					using var response = await httpClient.SendDefaultAsync(request, token);
+					return await body.Invoke(response); // TODO add token ?
 				}
 			}
 			catch (Exception ex) when (ex is HttpRequestException || ex is OperationCanceledException)
@@ -153,13 +153,13 @@ namespace TS3AudioBot.Helper
 		public static Task ToStream(this HttpRequestMessage request, Func<Stream, Task> body)
 			=> request.ToAction(async response => await body(await response.Content.ReadAsStreamAsync()));
 
-		public static async Task<HttpResponseMessage> UnsafeResponse(this HttpRequestMessage request)
+		public static async Task<HttpResponseMessage> UnsafeResponse(this HttpRequestMessage request, CancellationToken token = default)
 		{
 			try
 			{
 				using (request)
 				{
-					var response = await httpClient.SendDefaultAsync(request);
+					var response = await httpClient.SendDefaultAsync(request, token);
 					return response;
 				}
 			}
@@ -169,17 +169,14 @@ namespace TS3AudioBot.Helper
 			}
 		}
 
-		public static async Task<Stream> UnsafeStream(this HttpRequestMessage request)
-			=> await (await request.UnsafeResponse()).Content.ReadAsStreamAsync();
-
 		// Util
 
 		public static string? GetSingle(this HttpHeaders headers, string name)
 			=> headers.TryGetValues(name, out var hvals) ? hvals.FirstOrDefault() : null;
 
-		private static async Task<HttpResponseMessage> SendDefaultAsync(this HttpClient client, HttpRequestMessage request)
+		private static async Task<HttpResponseMessage> SendDefaultAsync(this HttpClient client, HttpRequestMessage request, CancellationToken token)
 		{
-			var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+			var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token);
 			CheckOkReturnCodeOrThrow(response);
 			return response;
 		}

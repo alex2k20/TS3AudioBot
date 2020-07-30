@@ -7,6 +7,7 @@
 // You should have received a copy of the Open Software License along with this
 // program. If not, see <https://opensource.org/licenses/OSL-3.0>.
 
+using CliWrap;
 using System;
 using System.ComponentModel;
 using System.Diagnostics;
@@ -23,7 +24,7 @@ using TSLib.Scheduler;
 
 namespace TS3AudioBot.Audio
 {
-	public class FfmpegProducer : IPlayerSource, ISampleInfo, IDisposable
+	public class FfmpegProducer : IPlayerSource, IDisposable
 	{
 		private static readonly NLog.Logger Log = NLog.LogManager.GetCurrentClassLogger();
 		private readonly Id id;
@@ -41,10 +42,8 @@ namespace TS3AudioBot.Audio
 
 		private readonly DedicatedTaskScheduler scheduler;
 		private FfmpegInstance? ffmpegInstance;
-
-		public int SampleRate { get; } = 48000;
-		public int Channels { get; } = 2;
-		public int BitsPerSample { get; } = 16;
+		private PlayTask? currentPlayTask;
+		public SampleInfo SampleInfo { get; } = SampleInfo.OpusMusic;
 
 		public FfmpegProducer(ConfToolsFfmpeg config, DedicatedTaskScheduler scheduler, Id id)
 		{
@@ -59,7 +58,11 @@ namespace TS3AudioBot.Audio
 			return Task.CompletedTask;
 		}
 
-		public async Task AudioStartIcy(string url) => await StartFfmpegProcessIcy(url);
+		public Task AudioStartIcy(string url)
+		{
+			PlayIcyTask(url);
+			return Task.CompletedTask;
+		}
 
 		public void AudioStop()
 		{
@@ -72,19 +75,18 @@ namespace TS3AudioBot.Audio
 
 		public Task Seek(TimeSpan position) { SetPosition(position); return Task.CompletedTask; }
 
-		public int Read(byte[] buffer, int offset, int length, out Meta? meta)
+		public async ValueTask<(int read, Meta? meta)> ReadAsync(Memory<byte> data)
 		{
-			meta = default;
 			int read;
 
 			var instance = ffmpegInstance;
 
 			if (instance is null)
-				return 0;
+				return (0, default);
 
 			try
 			{
-				read = instance.FfmpegProcess.StandardOutput.BaseStream.Read(buffer, 0, length);
+				read = await instance.FfmpegProcess.StandardOutput.BaseStream.ReadAsync(data);
 			}
 			catch (Exception ex)
 			{
@@ -100,7 +102,7 @@ namespace TS3AudioBot.Audio
 					? OnReadEmptyIcy(instance)
 					: OnReadEmpty(instance);
 				if (ret)
-					return 0;
+					return (0, default);
 
 				if (instance.FfmpegProcess.HasExitedSafe())
 				{
@@ -112,13 +114,13 @@ namespace TS3AudioBot.Audio
 				if (triggerEndSafe)
 				{
 					OnSongEnd?.Invoke(this, EventArgs.Empty);
-					return 0;
+					return (0, default);
 				}
 			}
 
 			instance.HasTriedToReconnect = false;
 			instance.AudioTimer.PushBytes(read);
-			return read;
+			return (read, default);
 		}
 
 		private (bool ret, bool trigger) OnReadEmpty(FfmpegInstance instance)
@@ -135,15 +137,14 @@ namespace TS3AudioBot.Audio
 					{
 						Log.Debug("Connection to song lost, retrying at {0}", actualStopPosition);
 						instance.HasTriedToReconnect = true;
-						var newInstance = SetPosition(actualStopPosition);
-						if (newInstance.Ok)
+						if (SetPosition(actualStopPosition).Get(out var newInstance, out var error))
 						{
-							newInstance.Value.HasTriedToReconnect = true;
+							newInstance.HasTriedToReconnect = true;
 							return (true, false);
 						}
 						else
 						{
-							Log.Debug("Retry failed {0}", newInstance.Error);
+							Log.Debug("Retry failed {0}", error);
 							return (false, true);
 						}
 					}
@@ -209,7 +210,7 @@ namespace TS3AudioBot.Audio
 
 			var newInstance = new FfmpegInstance(
 				url,
-				new PreciseAudioTimer(this)
+				new PreciseAudioTimer(SampleInfo)
 				{
 					SongPositionOffset = offset,
 				});
@@ -238,7 +239,7 @@ namespace TS3AudioBot.Audio
 				var stream = await response.Content.ReadAsStreamAsync();
 				var newInstance = new FfmpegInstance(
 					url,
-					new PreciseAudioTimer(this),
+					new PreciseAudioTimer(SampleInfo),
 					stream,
 					metaint)
 				{
@@ -257,6 +258,57 @@ namespace TS3AudioBot.Audio
 				var error = $"Unable to create icy-stream ({ex.Message})";
 				Log.Warn(ex, error);
 				return error;
+			}
+		}
+
+		private void PlayIcyTask(string url)
+		{
+			scheduler.VerifyOwnThread();
+
+			if (currentPlayTask != null)
+			{
+				currentPlayTask.Cts.Cancel();
+				currentPlayTask = null;
+			}
+
+			var cts = new CancellationTokenSource();
+			var task = PlayIcyTask(url, cts);
+			currentPlayTask = new PlayTask(task, cts);
+		}
+
+		private async Task PlayIcyTask(string url, CancellationTokenSource cts)
+		{
+			try
+			{
+				using var _ = cts;
+				using var response = await WebWrapper
+					.Request(url)
+					.WithHeader("Icy-MetaData", "1")
+					.UnsafeResponse(cts.Token);
+
+				if (!int.TryParse(response.Headers.GetSingle("icy-metaint"), out var metaint))
+				{
+					Log.Debug("Invalid icy stream tags");
+					return;
+				}
+
+				using var stream = await response.Content.ReadAsStreamAsync();
+				using var icyStream = new IcyStream(stream, metaint)
+				{
+					OnMetaUpdated = e => OnSongUpdated?.Invoke(this, e)
+				};
+
+				await Cli.Wrap(config.Path.Value)
+					.WithArguments(LinkConfIcy)
+					.WithStandardInputPipe(PipeSource.FromStream(icyStream))
+					.WithStandardOutputPipe(PipeTarget.Null)
+					.WithStandardErrorPipe(PipeTarget.Null)
+					.WithValidation(CommandResultValidation.None)
+					.ExecuteAsync(cts.Token);
+			}
+			catch (Exception ex)
+			{
+				Log.Warn(ex, $"Icy-stream cancelled ({ex.Message})");
 			}
 		}
 
@@ -497,4 +549,147 @@ namespace TS3AudioBot.Audio
 			}
 		}
 	}
+
+	public class IcyStream : Stream
+	{
+		private static readonly Regex IcyMetadataMacher = new Regex("((\\w+)='(.*?)';\\s*)+", Util.DefaultRegexConfig);
+
+		public int IcyMetaInt { get; }
+		public Stream BaseStream { get; }
+		public Action<SongInfoChanged>? OnMetaUpdated { get; set; }
+		private byte[]? icyMetaBuffer = null;
+
+		public override bool CanRead => true;
+		public override bool CanSeek => false;
+		public override bool CanWrite => false;
+		public override long Length => 0;
+		public override long Position { get => 0; set => throw new NotSupportedException(); }
+
+		private int readCount;
+
+		public IcyStream(Stream baseStream, int icyMetaInt)
+		{
+			BaseStream = baseStream;
+			IcyMetaInt = icyMetaInt;
+
+			readCount = 0;
+		}
+
+		public override void Flush() => throw new NotSupportedException();
+
+		public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+		public override async Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+		{
+			const int IcyMaxMeta = 255 * 16;
+			const int ReadBufferSize = 4096;
+
+			try
+			{
+				while (true)
+				{
+					if (readCount < IcyMetaInt)
+					{
+						int read = await BaseStream.ReadAsync(buffer, 0, Math.Min(ReadBufferSize, IcyMetaInt - readCount), cancellationToken);
+						if (read == 0)
+						{
+							// Close(); ?
+							return 0;
+						}
+						readCount += read;
+						return read;
+					}
+					readCount = 0;
+
+					byte[] metaBuffer;
+					if (buffer.Length >= IcyMaxMeta)
+					{
+						metaBuffer = buffer;
+					}
+					else
+					{
+						icyMetaBuffer ??= new byte[IcyMaxMeta];
+						metaBuffer = icyMetaBuffer;
+					}
+
+					var metaByteRead = await BaseStream.ReadAsync(metaBuffer, 0, 1, cancellationToken);
+					if (metaByteRead == 0)
+					{
+						// Close();
+						return 0;
+					}
+					var metaByte = metaBuffer[0];
+
+					if (metaByte > 0)
+					{
+						metaByte *= 16;
+						while (readCount < metaByte)
+						{
+							int read = await BaseStream.ReadAsync(metaBuffer, 0, metaByte - readCount, cancellationToken);
+							if (read == 0)
+							{
+								// Close();
+								return 0;
+							}
+							readCount += read;
+						}
+						readCount = 0;
+
+						var metaString = Tools.Utf8Encoder.GetString(metaBuffer, 0, metaByte).TrimEnd('\0');
+						//Log.Debug("Meta: {0}", metaString);
+						OnMetaUpdated?.Invoke(ParseIcyMeta(metaString));
+					}
+				}
+			}
+			catch (Exception ex)
+			{
+				return 0;
+			}
+		}
+
+		public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+		public override void SetLength(long value) => throw new NotSupportedException();
+		public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+		private static SongInfoChanged ParseIcyMeta(string metaString)
+		{
+			var songInfo = new SongInfoChanged();
+			var match = IcyMetadataMacher.Match(metaString);
+			if (match.Success)
+			{
+				for (int i = 0; i < match.Groups[1].Captures.Count; i++)
+				{
+					switch (match.Groups[2].Captures[i].Value.ToUpperInvariant())
+					{
+					case "STREAMTITLE":
+						songInfo.Title = match.Groups[3].Captures[i].Value;
+						break;
+					}
+				}
+			}
+			return songInfo;
+		}
+
+		protected override void Dispose(bool disposing)
+		{
+			icyMetaBuffer = null;
+			OnMetaUpdated = null;
+			BaseStream.Dispose();
+		}
+	}
+
+	public class PlayTask
+	{
+		public Task RunningTask { get; }
+		public CancellationTokenSource Cts { get; }
+
+		public PlayTask(Task runningTask, CancellationTokenSource cancellationToken)
+		{
+			RunningTask = runningTask;
+			Cts = cancellationToken;
+		}
+	}
+
+	// Icy: IcyLoop +=> FFmpeg +=> Buffer -=> TimePipe
+	// Nrm:             FFmpeg +=> Buffer -=> TimePipe
 }

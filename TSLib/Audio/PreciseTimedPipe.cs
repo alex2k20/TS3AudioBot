@@ -47,29 +47,29 @@ namespace TSLib.Audio
 			}
 		}
 
-		public PreciseTimedPipe(ISampleInfo info, Id id)
+		public PreciseTimedPipe(SampleInfo info, Id id)
 		{
 			running = true;
 			paused = true;
 
-			AudioTimer = new PreciseAudioTimer(info.SampleRate, info.BitsPerSample, info.Channels);
+			AudioTimer = new PreciseAudioTimer(info);
 			AudioTimer.Start();
 
 			tickThread = new Thread(() => { Tools.SetLogId(id); ReadLoop(); }) { Name = $"AudioPipe[{id}]" };
 			tickThread.Start();
 		}
 
-		public PreciseTimedPipe(ISampleInfo info, Id id, IAudioPassiveProducer inStream) : this(info, id)
+		public PreciseTimedPipe(SampleInfo info, Id id, IAudioPassiveProducer inStream) : this(info, id)
 		{
 			InStream = inStream;
 		}
 
-		public PreciseTimedPipe(ISampleInfo info, Id id, IAudioPassiveConsumer outStream) : this(info, id)
+		public PreciseTimedPipe(SampleInfo info, Id id, IAudioPassiveConsumer outStream) : this(info, id)
 		{
 			OutStream = outStream;
 		}
 
-		public PreciseTimedPipe(ISampleInfo info, Id id, IAudioPassiveProducer inStream, IAudioPassiveConsumer outStream) : this(info, id)
+		public PreciseTimedPipe(SampleInfo info, Id id, IAudioPassiveProducer inStream, IAudioPassiveConsumer outStream) : this(info, id)
 		{
 			InStream = inStream;
 			OutStream = outStream;
@@ -94,18 +94,26 @@ namespace TSLib.Audio
 			if (readBuffer.Length < ReadBufferSize)
 				readBuffer = new byte[ReadBufferSize];
 
+			//var strBuf = new string('|', Math.Max(0, (int)AudioTimer.RemainingBufferDuration.TotalMilliseconds));
+			//strBuf = strBuf.PadRight(40);
+			//Console.WriteLine("Current buffer: [{0}] {1}", strBuf, AudioTimer.SongPosition);
+
 			while (AudioTimer.RemainingBufferDuration < AudioBufferLength)
 			{
-				int read = inStream.Read(readBuffer, 0, readBuffer.Length, out var meta);
+				var readBufferSpan = readBuffer.AsSpan(0, ReadBufferSize);
+				int read = inStream.Read(readBufferSpan, out var meta);
 				if (read == 0)
 					return;
 
 				if (AudioTimer.RemainingBufferDuration < TimeSpan.Zero)
+				{
+					Console.WriteLine("Resetting");
 					AudioTimer.ResetRemoteBuffer();
+				}
 
 				AudioTimer.PushBytes(read);
 
-				OutStream?.Write(readBuffer.AsSpan(0, read), meta);
+				OutStream?.Write(readBufferSpan[..read], meta);
 			}
 		}
 

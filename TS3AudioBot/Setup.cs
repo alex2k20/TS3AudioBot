@@ -11,8 +11,10 @@ using CommandLine;
 using CommandLine.Text;
 using NLog;
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Runtime;
 using System.Threading;
 using System.Threading.Tasks;
@@ -35,6 +37,25 @@ namespace TS3AudioBot
 		{
 			Thread.CurrentThread.Name = "TAB Main";
 			Tools.SetLogId("Core");
+
+			// TODO: XXXXX REMOVE BEFORE PUSH
+			new Thread(() =>
+			{
+				var dbgf = typeof(ThreadPool).GetMethod("GetQueuedWorkItems", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+				var dbgd = (Func<IEnumerable<object>>)dbgf!.CreateDelegate(typeof(Func<IEnumerable<object>>));
+				while (true)
+				{
+					var list = dbgd.Invoke().ToArray();
+					if (list.Length > 0)
+					{
+						Console.WriteLine("{0}", string.Join(", ", list));
+					}
+					Thread.Yield();
+				}
+
+			})
+			{ IsBackground = true }.Start();
+
 
 			var parsedArgs = new Parser(with =>
 			{

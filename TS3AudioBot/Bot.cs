@@ -244,6 +244,9 @@ namespace TS3AudioBot
 
 		private async Task OnMessageReceived(object? sender, TextMessage textMessage)
 		{
+			if (textMessage?.Message == "crash") // TODO: XXXXX REMOVE BEFORE PUSH
+				throw new Exception();
+
 			if (textMessage?.Message == null)
 			{
 				Log.Warn("Invalid TextMessage: {@textMessage}", textMessage);
