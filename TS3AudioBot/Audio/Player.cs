@@ -84,7 +84,7 @@ namespace TS3AudioBot.Audio
 				source.OnSongEnd += TriggerSongEnd;
 				source.OnSongUpdated += TriggerSongUpdated;
 				// Update pipes
-				MergePipe.Add(source);
+				// XXXXXXX source.Chain<BufferPipe>().Into(MergePipe);
 				CurrentPlayerSource = source;
 			}
 			// Start Ticker
@@ -98,7 +98,7 @@ namespace TS3AudioBot.Audio
 				return;
 			source.OnSongEnd -= TriggerSongEnd;
 			source.OnSongUpdated -= TriggerSongUpdated;
-			MergePipe.Remove(source);
+			// XXXXXXX MergePipe.Remove(source);
 			source.Dispose();
 		}
 
@@ -113,7 +113,6 @@ namespace TS3AudioBot.Audio
 		{
 			Stop();
 			TimePipe.Paused = true;
-			MergePipe.Dispose();
 		}
 
 		public TimeSpan? Length => CurrentPlayerSource?.Length;
@@ -143,10 +142,10 @@ namespace TS3AudioBot.Audio
 		{
 			producer.OnSongEnd += (s, e) =>
 			{
-				MergePipe.Remove(producer);
+				// XXXXXXX MergePipe.Remove(producer);
 				producer.Dispose();
 			};
-			MergePipe.Add(producer);
+			// XXXXXXX MergePipe.Add(producer);
 			TimePipe.Paused = false;
 		}
 

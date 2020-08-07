@@ -93,8 +93,6 @@ namespace TSLib.Audio
 					return take;
 				}
 			}
-
-			public void Dispose() { }
 		}
 	}
 }

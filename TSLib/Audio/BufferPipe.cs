@@ -100,8 +100,6 @@ namespace TSLib.Audio
 			}
 		}
 
-		public void Dispose() { }
-
 		private enum Mode
 		{
 			/// <summary>Only writing into the buffer. Read will return 0.</summary>

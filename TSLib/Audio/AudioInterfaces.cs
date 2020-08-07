@@ -14,7 +14,7 @@ namespace TSLib.Audio
 	public interface IAudioStream { }
 
 	/// <summary>Passive producer will serve audio data that must be read.</summary>
-	public interface IAudioPassiveProducer : IAudioStream, IDisposable
+	public interface IAudioPassiveProducer : IAudioStream
 	{
 		int Read(Span<byte> data, out Meta? met);
 	}

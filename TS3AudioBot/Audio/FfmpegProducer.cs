@@ -44,6 +44,7 @@ namespace TS3AudioBot.Audio
 		private FfmpegInstance? ffmpegInstance;
 		private PlayTask? currentPlayTask;
 		public SampleInfo SampleInfo { get; } = SampleInfo.OpusMusic;
+		public IAudioPassiveConsumer? OutStream { get; set; }
 
 		public FfmpegProducer(ConfToolsFfmpeg config, DedicatedTaskScheduler scheduler, Id id)
 		{

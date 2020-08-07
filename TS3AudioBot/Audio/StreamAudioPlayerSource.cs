@@ -13,46 +13,46 @@ using TSLib.Audio;
 
 namespace TS3AudioBot.Audio
 {
-	public class StreamAudioPlayerSource : IPlayerSource, IAudioActiveConsumer
+	public class StreamAudioPlayerSource : IPlayerSource
 	{
-		private bool hasFired = false;
+		public IAudioPassiveConsumer? OutStream { get; set; }
 
-		public IAudioPassiveProducer? InStream { get; set; }
 		public TimeSpan? Length => null;
 		public TimeSpan? Position => null;
 
+		private bool hasFired = false;
 		public event EventHandler? OnSongEnd;
 		event EventHandler<SongInfoChanged> IPlayerSource.OnSongUpdated { add { } remove { } }
 
 		public StreamAudioPlayerSource() { }
 
-		public StreamAudioPlayerSource(IAudioPassiveProducer stream) : this()
-		{
-			InStream = stream;
-		}
+		//public StreamAudioPlayerSource(IAudioPassiveProducer stream) : this()
+		//{
+		//	InStream = stream;
+		//}
 
-		public int Read(Span<byte> data, out Meta? meta)
-		{
-			var stream = InStream;
-			if (stream is null)
-			{
-				meta = default;
-				return 0;
-			}
+		//public int Read(Span<byte> data, out Meta? meta)
+		//{
+		//	var stream = InStream;
+		//	if (stream is null)
+		//	{
+		//		meta = default;
+		//		return 0;
+		//	}
 
-			var read = stream.Read(data, out meta);
-			if (read == 0 && !hasFired)
-			{
-				hasFired = true;
-				OnSongEnd?.Invoke(this, EventArgs.Empty);
-				return 0;
-			}
-			return read;
-		}
+		//	var read = stream.Read(data, out meta);
+		//	if (read == 0 && !hasFired)
+		//	{
+		//		hasFired = true;
+		//		OnSongEnd?.Invoke(this, EventArgs.Empty);
+		//		return 0;
+		//	}
+		//	return read;
+		//}
 
 		public void Reset() => hasFired = false;
 
-		public void Dispose() => InStream?.Dispose();
+		public void Dispose() { }
 
 		public Task Seek(TimeSpan position) { throw new NotSupportedException(); }
 	}
